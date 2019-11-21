@@ -2,10 +2,8 @@ package network
 
 import (
 	"../crypto"
-	"fmt"
-	"github.com/bgadrian/data-structures/priorityqueue"
-	"hash"
-	"time"
+	"encoding/json"
+	"github.com/jupp0r/go-priority-queue"
 )
 
 // Should abstract away the connections and verify that packets are correct coming in and out. Note that we do not deal
@@ -17,65 +15,55 @@ import (
 type Peer struct {
 	incoming chan Packet // TODO: Replace this with a peer connection wrapped by this
 	outgoing chan Packet
-	receivedAcceptedPaymentPacketsQueue priorityqueue.HierarchicalHeap // PaymentPackets ordered by timeout
-	receivedAcceptedPaymentPackets map[hash.Hash]PaymentPacket
-	sentPendingPaymentPackets map[hash.Hash]PaymentPacket
-	PaymentPacketFeePercent float64
+	pendingPackets map[string]PaymentPacket
+	pendingPacketsTOQueue pq.PriorityQueue
+	core *Core
 }
 
-func (peer * Peer) acceptablePaymentPacketConditions(paymentPacket PaymentPacket) bool {
-	return true
-}
-
+/*
+Constructor
+When a new peer is created it should insert itself into the routing table, and upon destruction it should be removed
+from the routing table.
+ */
 func newPeer() {
 
 }
 
-func (peer *Peer) read() {
-	// Server functionality
-	packetWrapper := <-peer.incoming
-	// PaymentPacket functionality
-	if packetWrapper.packetType == "Payment" {
-		var paymentPacket PaymentPacket
-		err := crypto.DeserializePacket(packetWrapper.serPacket, &paymentPacket)
-		if err != nil { fmt.Errorf("Error in Deserialization", err) }
-		paymentPacketHash, err := crypto.PacketHash(packetWrapper.serPacket)
-		if err != nil { fmt.Errorf("Error in hashing", err) }
-		if _, exists := peer.receivedAcceptedPaymentPackets[paymentPacketHash]; exists {
-			fmt.Errorf("packet hash already exists")
-		} else if !peer.acceptablePaymentPacketConditions(paymentPacket) {
-			// TODO: Send Rejection Packet
-			fmt.Errorf("Received PaymentPacket does not fulfill Peer's acceptable conditions")
-		} else {
-			peer.receivedAcceptedPaymentPackets[paymentPacketHash] = paymentPacket
-			err := peer.receivedAcceptedPaymentPacketsQueue.Enqueue(paymentPacket, int(paymentPacket.Timeout))
-			if err != nil { fmt.Errorf("Failed to enqueue PaymentPacket onto Queue", err) }
-			newPaymentPacket := PaymentPacket{
-				// TODO: Add Header
-				// TODO: Add Receiver
-				// TODO: Add Commit
-				Ledger: paymentPacket.Ledger,
-				Amount: paymentPacket.Amount * (1 - peer.PaymentPacketFeePercent),
-				NumHops: paymentPacket.NumHops - 1,
-				Timestamp: time.Now().Unix(),
-				Timeout: paymentPacket.Timeout,
-			}
-			if newPaymentPacket.NumHops != 0 {
-				// TODO: Send to VPN Packet Handler
-				// TODO: Add to sentPendingPaymentPackets
-			} else {
-
-			}
-			/*acceptPacket := AcceptPacket{
-				// TODO: Add Header
-				AcceptedPacketHeader: paymentPacket.Header,
-				// TODO: Add Precommit
-			}*/
-			// TODO: Send Accept Packet backward
-		}
-	}
+func (peer *Peer) checkValidPacket(pktWrapper Packet) error {
+	payPktHash, err := crypto.Hash(pktWrapper.SerPacket)
+	if err != nil { return err }
+	err = crypto.CheckHashEqual(payPktHash, pktWrapper.Header)
+	if err != nil { return err }
+	return nil
 }
 
+/*
+Takes an aggregated packet and submits the split, inner VPN packets to core. Does this by running a coroutine reading
+incoming and taking those packets, splitting them, and submitting them to core.
+ */
+func (peer *Peer) Read() error {
+	// Server functionality
+	pkt := <-peer.incoming
+	// PaymentPacket functionality
+	if err := peer.checkValidPacket(pkt); err != nil { return err }
+	if pkt.Type == VPN {
+		var vpnPacket VPNPacket
+		err := json.Unmarshal(pkt.SerPacket, vpnPacket)
+		if err != nil { return err }
+		for i := 0; i < len(vpnPacket.Packets); i++ {
+			if err := peer.checkValidPacket(vpnPacket.Packets[i]); err != nil { return err }
+			peer.core.RegisterIncomingPacket(pkt)
+		}
+	} else {
+		peer.core.RegisterIncomingPacket(pkt)
+	}
+	return nil
+}
+
+/*
+Called by core to write an aggregated packet to this peer. Write to the outgoing channel, and that channel should handle
+the actual processingi
+ */
 func (peer *Peer) write(packet Packet) {
 
 }
