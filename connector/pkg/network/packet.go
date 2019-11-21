@@ -6,7 +6,7 @@ import (
 )
 
 // This file should define all the packets used.
-// To add a new packet, please inherit from _Packet and add the deserialization logic to DeserPeerPacket
+// To add a new packet, please inherit from _Packet and add the deserialization logic to DeserNetworkPacket
 
 type PacketType int
 
@@ -19,7 +19,7 @@ const (
 )
 
 // Wraps packets for peers and returns a packet that implements Packet interface
-type PeerPacket struct {
+type NetworkPacket struct {
 	PacketType
 	SerPacket []byte
 }
@@ -31,12 +31,12 @@ type Packet interface {
 	SetHeader(b []byte)
 }
 
-func SerPeerPacket(pkt Packet) (PeerPacket, error) {
-	var peerPkt PeerPacket
+func SerNetworkPacket(pkt Packet) (NetworkPacket, error) {
+	var peerPkt NetworkPacket
 	pktType := pkt.PacketType()
 	serPkt, err := json.Marshal(pkt)
 	if err == nil {
-		peerPkt = PeerPacket{
+		peerPkt = NetworkPacket{
 			PacketType: pktType,
 			SerPacket: serPkt,
 		}
@@ -44,7 +44,7 @@ func SerPeerPacket(pkt Packet) (PeerPacket, error) {
 	return peerPkt, err
 }
 
-func DeserPeerPacket(pkt PeerPacket) (Packet, error) {
+func DeserNetworkPacket(pkt NetworkPacket) (Packet, error) {
 	switch pkt.PacketType {
 	case PAYMENT: {
 		var retPkt PaymentPacket

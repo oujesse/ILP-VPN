@@ -2,7 +2,8 @@ package network
 
 import (
 	"encoding/json"
-	"github.com/exasys/connector/pkg/crypto"
+	"../crypto"
+	"errors"
 	pq "github.com/jupp0r/go-priority-queue"
 )
 
@@ -13,10 +14,12 @@ import (
 // should be bundled into large packets.
 
 type Peer struct {
-	incoming chan Packet // TODO: Replace this with a peer connection wrapped by this
-	outgoing chan Packet
+	incoming chan NetworkPacket // TODO: Replace this with a peer connection wrapped by this
+	outgoing chan NetworkPacket
 	pendingPackets map[string]PaymentPacket
 	pendingPacketsTOQueue pq.PriorityQueue
+	nextVPNPacket VPNPacket
+	nextVPNPacketSize int
 	core *Core
 }
 
@@ -49,12 +52,19 @@ incoming and taking those packets, splitting them, and submitting them to core.
  */
 func (peer *Peer) Read() error {
 	// Server functionality
-	pkt := <-peer.incoming
+	networkPkt := <-peer.incoming
+	pkt, err := DeserNetworkPacket(networkPkt)
+	if err != nil { return err }
 	// PaymentPacket functionality
+	if err := peer.checkValidPacket(pkt); err != nil { return err }
 	if pkt.PacketType() == VPN {
-
+		vpnPkt, ok := pkt.(*VPNPacket)
+		if !ok { return errors.New("unable to convert peerPkt into VPNPacket") }
+		for i := 0; i < len(vpnPkt.Packets); i++ {
+			if err := peer.checkValidPacket(vpnPkt.Packets[i]); err != nil { return err }
+			peer.core.RegisterIncomingPacket(vpnPkt.Packets[i])
+		}
 	} else {
-		if err := peer.checkValidPacket(pkt); err != nil { return err }
 		peer.core.RegisterIncomingPacket(pkt)
 	}
 	return nil
@@ -64,6 +74,30 @@ func (peer *Peer) Read() error {
 Called by core to write an aggregated packet to this peer. Write to the outgoing channel, and that channel should handle
 the actual processing
  */
-func (peer *Peer) write(packet Packet) {
+func (peer *Peer) write(packet Packet) error {
+	if err := peer.checkValidPacket(packet); err != nil { return err }
+	networkPkt, err := SerNetworkPacket(packet)
+	if err != nil { return err }
+	peer.outgoing <- networkPkt
+}
 
+func (peer *Peer) writeToVPNPacket(packet Packet) error {
+	peer.nextVPNPacket.Packets = append(peer.nextVPNPacket.Packets, packet)
+	if len(peer.nextVPNPacket.Packets) >= peer.nextVPNPacketSize {
+		networkPkt, err := SerNetworkPacket(&peer.nextVPNPacket)
+		if err != nil { return err }
+		peer.outgoing <- networkPkt
+		for i := 0; i < len(peer.nextVPNPacket.Packets); i++ {
+			if peer.nextVPNPacket.Packets[i].PacketType() == PAYMENT {
+				pkt, ok := peer.nextVPNPacket.Packets[i].(*PaymentPacket)
+				if !ok { return errors.New("error during Packet to PaymentPacket conversion") }
+				peer.pendingPackets[string(pkt.Header())] = *pkt
+				peer.pendingPacketsTOQueue.Insert(pkt, float64(pkt.Timeout))
+			}
+		}
+		peer.nextVPNPacket = VPNPacket{
+			Packets: []Packet{},
+		}
+	}
+	return nil
 }
