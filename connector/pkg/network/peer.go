@@ -15,8 +15,10 @@ import (
 type Peer struct {
 	incoming chan Packet // TODO: Replace this with a peer connection wrapped by this
 	outgoing chan Packet
-	pendingPackets map[string]PaymentPacket
+	pendingPackets map[string]Packet
 	pendingPacketsTOQueue pq.PriorityQueue
+	nextVPNPacket VPNPacket
+	nextVPNPacketSize int
 	core *Core
 }
 
@@ -62,8 +64,41 @@ func (peer *Peer) Read() error {
 
 /*
 Called by core to write an aggregated packet to this peer. Write to the outgoing channel, and that channel should handle
-the actual processingi
+the actual processing
  */
-func (peer *Peer) write(packet Packet) {
+func (peer *Peer) write(packet Packet) error {
+	if err := peer.checkValidPacket(packet); err != nil { return err }
 
 }
+
+func (peer *Peer) writeToVPNPacket(packet Packet) error {
+	peer.nextVPNPacket.Packets = append(peer.nextVPNPacket.Packets, packet)
+	if len(peer.nextVPNPacket.Packets) >= peer.nextVPNPacketSize {
+		vpnPacketSer, err := json.Marshal(peer.nextVPNPacket)
+		if err != nil { return err }
+		vpnPacketHash, err := crypto.Hash(vpnPacketSer)
+		if err != nil { return err }
+		outgoingPacket := Packet{
+			Type: VPN,
+			// TODO: Use routing table for NextHop
+			Header: vpnPacketHash,
+			SerPacket: vpnPacketSer,
+		}
+		peer.outgoing <- outgoingPacket
+		for i := 0; i < len(peer.nextVPNPacket.Packets); i++ {
+			if peer.nextVPNPacket.Packets[i].Type == PAYMENT {
+				peer.pendingPackets[string(peer.nextVPNPacket.Packets[i].Header)] = peer.nextVPNPacket.Packets[i]
+				//peer.pendingPacketsTOQueue.Insert()
+			}
+		}
+		peer.nextVPNPacket = VPNPacket{
+			Packets: []Packet{},
+		}
+	}
+	return nil
+}
+
+
+/*
+	
+ */
