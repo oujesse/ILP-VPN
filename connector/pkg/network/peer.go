@@ -71,19 +71,31 @@ func (peer *Peer) Read() error {
 }
 
 /*
+Called by WriteToVPNPacket to check and see if the packets aggregated inside peer.nextVPNPacket should be flushed to the
+network.
+ */
+func (peer *Peer) ShouldFlushVPNPacket() bool {
+	if len(peer.nextVPNPacket.Packets) >= peer.nextVPNPacketSize {
+		return true
+	}
+	return false
+}
+
+/*
 Called by core to write an aggregated packet to this peer. Write to the outgoing channel, and that channel should handle
 the actual processing
  */
-func (peer *Peer) write(packet Packet) error {
+func (peer *Peer) Write(packet Packet) error {
 	if err := peer.checkValidPacket(packet); err != nil { return err }
 	networkPkt, err := SerNetworkPacket(packet)
 	if err != nil { return err }
 	peer.outgoing <- networkPkt
+	return nil
 }
 
-func (peer *Peer) writeToVPNPacket(packet Packet) error {
+func (peer *Peer) WriteToVPNPacket(packet Packet) error {
 	peer.nextVPNPacket.Packets = append(peer.nextVPNPacket.Packets, packet)
-	if len(peer.nextVPNPacket.Packets) >= peer.nextVPNPacketSize {
+	if peer.ShouldFlushVPNPacket() {
 		networkPkt, err := SerNetworkPacket(&peer.nextVPNPacket)
 		if err != nil { return err }
 		peer.outgoing <- networkPkt
