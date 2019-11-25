@@ -14,6 +14,7 @@ import (
 // should be bundled into large packets.
 
 type Peer struct {
+	address []byte
 	incoming chan NetworkPacket // TODO: Replace this with a peer connection wrapped by this
 	outgoing chan NetworkPacket
 	pendingPackets map[string]PaymentPacket
